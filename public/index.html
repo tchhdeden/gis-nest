@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Maps Test</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <h1>Maps WebSocket Test</h1>
+    
+    <div>
+        <h2>Create Map</h2>
+        <button onclick="createMap()">Create Map</button>
+    </div>
+    
+    <div>
+        <h2>Find All Maps</h2>
+        <button onclick="findAllMaps()">Get All Maps</button>
+    </div>
+    
+    <div>
+        <h2>Find One Map</h2>
+        <input type="number" id="findOneId" placeholder="Map ID" value="1">
+        <button onclick="findOneMap()">Get Map</button>
+    </div>
+    
+    <div>
+        <h2>Update Map</h2>
+        <input type="number" id="updateId" placeholder="Map ID" value="1">
+        <button onclick="updateMap()">Update Map</button>
+    </div>
+    
+    <div>
+        <h2>Remove Map</h2>
+        <input type="number" id="removeId" placeholder="Map ID" value="1">
+        <button onclick="removeMap()">Remove Map</button>
+    </div>
+    
+    <div>
+        <h2>Response:</h2>
+        <pre id="response"></pre>
+    </div>
+
+    <script>
+        // Kết nối đến WebSocket server
+        const socket = io('http://localhost:3000');
+
+        socket.on('connect', () => {
+            console.log('Connected to WebSocket server');
+            document.getElementById('response').textContent = 'Connected to server!';
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from WebSocket server');
+            document.getElementById('response').textContent = 'Disconnected from server!';
+        });
+
+        // Các hàm để gửi events đến server
+        function createMap() {
+            socket.emit('createMap', { name: 'New Map', description: 'Test map' }, (response) => {
+                console.log('Create Map Response:', response);
+                document.getElementById('response').textContent = JSON.stringify(response, null, 2);
+            });
+        }
+
+        function findAllMaps() {
+            socket.emit('findAllMaps', {}, (response) => {
+                console.log('Find All Maps Response:', response);
+                document.getElementById('response').textContent = JSON.stringify(response, null, 2);
+            });
+        }
+
+        function findOneMap() {
+            const id = parseInt(document.getElementById('findOneId').value);
+            socket.emit('findOneMap', id, (response) => {
+                console.log('Find One Map Response:', response);
+                document.getElementById('response').textContent = JSON.stringify(response, null, 2);
+            });
+        }
+
+        function updateMap() {
+            const id = parseInt(document.getElementById('updateId').value);
+            socket.emit('updateMap', { id, name: 'Updated Map', description: 'Updated description' }, (response) => {
+                console.log('Update Map Response:', response);
+                document.getElementById('response').textContent = JSON.stringify(response, null, 2);
+            });
+        }
+
+        function removeMap() {
+            const id = parseInt(document.getElementById('removeId').value);
+            socket.emit('removeMap', id, (response) => {
+                console.log('Remove Map Response:', response);
+                document.getElementById('response').textContent = JSON.stringify(response, null, 2);
+            });
+        }
+    </script>
+</body>
+</html>
