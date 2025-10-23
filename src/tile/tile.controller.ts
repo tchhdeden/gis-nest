@@ -1,51 +1,81 @@
-import { Body, Controller, Get, Param, Post, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpStatus,
+  NotFoundException,
+  Param,
+  ParseIntPipe,
+  Post,
+  Res,
+} from '@nestjs/common';
 import { TileService } from './tile.service';
 import { type Response } from 'express';
-
-class AddPointDto {
-  name: string;
-  lat: number;
-  lon: number;
-}
+import { AddPointDto } from './dto/add-point.dto';
+import { TILE_CONSTANTS } from './constants/tile.constants';
 
 @Controller('tile')
 export class TileController {
   constructor(private readonly tileService: TileService) {}
 
+  /**
+   * Get vector tile in Protocol Buffer format
+   * @param z - Zoom level
+   * @param x - Tile X coordinate
+   * @param y - Tile Y coordinate
+   * @param res - Express response object
+   */
   @Get('tiles/:z/:x/:y.pbf')
   getTiles(
-    @Param('z') z: string,
-    @Param('x') x: string,
-    @Param('y') y: string,
+    @Param('z', ParseIntPipe) z: number,
+    @Param('x', ParseIntPipe) x: number,
+    @Param('y', ParseIntPipe) y: number,
     @Res() res: Response,
   ) {
-    const zoom = parseInt(z, 10);
-    const xTile = parseInt(x, 10);
-    const yTile = parseInt(y, 10);
-
-    const tile = this.tileService.getTiles(zoom, xTile, yTile);
+    const tile = this.tileService.getTile(z, x, y);
 
     if (!tile) {
-      return null;
+      throw new NotFoundException(
+        `Tile not found for coordinates z=${z}, x=${x}, y=${y}`,
+      );
     }
 
-    res.set({
-      'Content-Type': 'application/x-protobuf',
-    });
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
+    this.setTileHeaders(res);
     res.send(tile);
   }
 
+  /**
+   * Add a new point to the tile cache
+   * @param data - Point data containing name, latitude, and longitude
+   */
   @Post()
   addPoint(@Body() data: AddPointDto) {
-    const { lat, lon, name } = data;
-    this.tileService.addPoint(lat, lon, name);
+    this.tileService.addPoint(data);
+    return {
+      statusCode: HttpStatus.CREATED,
+      message: 'Point added successfully',
+    };
   }
 
+  /**
+   * Get all cached points
+   * @returns Array of all GeoJSON points
+   */
   @Get()
-  getAll() {
+  getAllPoints() {
     return this.tileService.getAllPoints();
+  }
+
+  /**
+   * Set appropriate headers for tile response
+   * @param res - Express response object
+   */
+  private setTileHeaders(res: Response): void {
+    res.set({
+      'Content-Type': TILE_CONSTANTS.CONTENT_TYPE,
+      'Cache-Control': TILE_CONSTANTS.CACHE_CONTROL,
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
   }
 }
