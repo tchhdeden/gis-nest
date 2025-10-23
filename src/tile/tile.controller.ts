@@ -67,6 +67,28 @@ export class TileController {
   }
 
   /**
+   * Get statistics about the tiles
+   * @returns Object containing tile statistics
+   */
+  @Get('stats')
+  getStats() {
+    return this.tileService.getStats();
+  }
+
+  /**
+   * Forcefully rebuild all dirty tiles
+   * @returns Success message
+   */
+  @Post('rebuild')
+  forceRebuild() {
+    this.tileService.forceRebuildAll();
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Dirty tiles rebuilt successfully',
+    };
+  }
+
+  /**
    * Set appropriate headers for tile response
    * @param res - Express response object
    */

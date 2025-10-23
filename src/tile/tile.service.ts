@@ -15,6 +15,13 @@ export class TileService {
   private readonly tileCache = new Map<string, TileCacheEntry>();
   private readonly pointCache = new Map<string, PointCacheEntry>();
 
+  // Ngưỡng để rebuild tile (nếu tile có > 1000 points thì skip rebuild mỗi lần)
+  private readonly REBUILD_THRESHOLD = 1000;
+
+  // Batch rebuild queue
+  private readonly dirtyTiles = new Set<string>();
+  private rebuildTimer: NodeJS.Timeout | null = null;
+
   /**
    * Get a cached tile by coordinates
    * @param z - Zoom level
@@ -24,6 +31,12 @@ export class TileService {
    */
   getTile(z: number, x: number, y: number): Uint8Array<ArrayBufferLike> | null {
     const key = this.generateCacheKey(z, x, y);
+
+    // Check if tile is dirty and needs rebuild
+    if (this.dirtyTiles.has(key)) {
+      this.rebuildTile(z, x, y);
+    }
+
     const cached = this.tileCache.get(key);
     return cached ? cached.data : null;
   }
@@ -46,12 +59,15 @@ export class TileService {
       zoom++
     ) {
       const { x, y } = this.latLonToTileCoordinates(lon, lat, zoom);
-      this.updateTileCache(zoom, x, y, point);
+      this.updateTileCacheOptimized(zoom, x, y, point);
     }
+
+    // Schedule batch rebuild
+    this.scheduleBatchRebuild();
 
     const endTime = performance.now();
     this.logger.log(
-      `Point "${name}" added and tiles generated in ${(endTime - startTime).toFixed(2)}ms`,
+      `Point "${name}" added in ${(endTime - startTime).toFixed(2)}ms`,
     );
   }
 
@@ -81,13 +97,13 @@ export class TileService {
   }
 
   /**
-   * Update tile cache with a new point
+   * Update tile cache with SMART REBUILD strategy
    * @param z - Zoom level
    * @param x - Tile X coordinate
    * @param y - Tile Y coordinate
    * @param point - GeoJSON point feature
    */
-  private updateTileCache(
+  private updateTileCacheOptimized(
     z: number,
     x: number,
     y: number,
@@ -101,14 +117,101 @@ export class TileService {
     }
     this.pointCache.get(cacheKey)?.points.push(point);
 
-    // Build and cache the tile
     const points = this.pointCache.get(cacheKey)?.points || [];
+    const pointCount = points.length;
+
+    // SMART REBUILD:
+    // - Nếu < 1000 points: rebuild ngay (nhanh)
+    // - Nếu >= 1000 points: đánh dấu dirty, rebuild sau (tránh lag)
+    if (pointCount < this.REBUILD_THRESHOLD) {
+      // Rebuild ngay lập tức
+      const tileBuffer = this.generateTileBuffer(z, x, y, points);
+      if (tileBuffer) {
+        this.tileCache.set(cacheKey, { data: tileBuffer });
+        this.logger.debug(
+          `Tile rebuilt immediately: ${cacheKey} (${pointCount} points)`,
+        );
+      }
+    } else {
+      // Đánh dấu dirty, rebuild sau
+      this.dirtyTiles.add(cacheKey);
+      this.logger.debug(
+        `Tile marked dirty: ${cacheKey} (${pointCount} points)`,
+      );
+    }
+  }
+
+  /**
+   * Rebuild a specific tile
+   */
+  private rebuildTile(z: number, x: number, y: number): void {
+    const cacheKey = this.generateCacheKey(z, x, y);
+    const points = this.pointCache.get(cacheKey)?.points || [];
+
+    if (points.length === 0) {
+      return;
+    }
+
+    const startTime = performance.now();
     const tileBuffer = this.generateTileBuffer(z, x, y, points);
 
     if (tileBuffer) {
       this.tileCache.set(cacheKey, { data: tileBuffer });
-      this.logger.debug(`Tile cached for ${cacheKey}`);
+      this.dirtyTiles.delete(cacheKey);
+
+      const duration = (performance.now() - startTime).toFixed(2);
+      this.logger.debug(
+        `Tile rebuilt: ${cacheKey} (${points.length} points in ${duration}ms)`,
+      );
     }
+  }
+
+  /**
+   * Schedule batch rebuild của dirty tiles
+   */
+  private scheduleBatchRebuild(): void {
+    // Clear timer cũ
+    if (this.rebuildTimer) {
+      clearTimeout(this.rebuildTimer);
+    }
+
+    // Schedule rebuild sau 100ms (debounce)
+    this.rebuildTimer = setTimeout(() => {
+      this.batchRebuildDirtyTiles();
+    }, 100);
+  }
+
+  /**
+   * Rebuild tất cả dirty tiles trong background
+   */
+  private batchRebuildDirtyTiles(): void {
+    if (this.dirtyTiles.size === 0) {
+      return;
+    }
+
+    const startTime = performance.now();
+    const dirtyCount = this.dirtyTiles.size;
+    let rebuilt = 0;
+
+    for (const cacheKey of this.dirtyTiles) {
+      const [z, x, y] = cacheKey.split('/').map(Number);
+      const points = this.pointCache.get(cacheKey)?.points || [];
+
+      if (points.length > 0) {
+        const tileBuffer = this.generateTileBuffer(z, x, y, points);
+        if (tileBuffer) {
+          this.tileCache.set(cacheKey, { data: tileBuffer });
+          rebuilt++;
+        }
+      }
+    }
+
+    this.dirtyTiles.clear();
+
+    const duration = (performance.now() - startTime).toFixed(2);
+    this.logger.log(
+      `Batch rebuild: ${rebuilt}/${dirtyCount} tiles in ${duration}ms`,
+    );
   }
 
   /**
@@ -130,6 +233,9 @@ export class TileService {
     // Build tile index
     const tileIndex = geojsonvt(featureCollection as any, {
       maxZoom: TILE_CONSTANTS.MAX_ZOOM,
+      tolerance: this.getToleranceForZoom(z),
+      extent: 4096,
+      buffer: 64,
     });
 
     const tile = tileIndex.getTile(z, x, y);
@@ -143,6 +249,15 @@ export class TileService {
     };
 
     return vtpbf.fromGeojsonVt(vectorTile);
+  }
+
+  /**
+   * Get tolerance based on zoom level
+   */
+  private getToleranceForZoom(zoom: number): number {
+    if (zoom <= 5) return 5;
+    if (zoom <= 10) return 3;
+    return 1;
   }
 
   /**
@@ -220,5 +335,25 @@ export class TileService {
         `Invalid longitude: ${lon}. Must be between -180 and 180.`,
       );
     }
+  }
+
+  /**
+   * Get statistics
+   */
+  getStats() {
+    return {
+      totalTiles: this.tileCache.size,
+      totalPointCaches: this.pointCache.size,
+      dirtyTiles: this.dirtyTiles.size,
+      totalPoints: this.getAllPoints().length,
+    };
+  }
+
+  /**
+   * Force rebuild all dirty tiles (for manual trigger)
+   */
+  forceRebuildAll(): void {
+    this.logger.log('Force rebuilding all dirty tiles...');
+    this.batchRebuildDirtyTiles();
   }
 }
