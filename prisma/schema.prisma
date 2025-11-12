@@ -21,6 +21,7 @@ model Category {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  @@index([name])
   @@map("categories")
 }
 
@@ -32,5 +33,17 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([createdAt])
   @@map("users")
+}
+
+model Location {
+  id        String                              @id @default(uuid())
+  geom      Unsupported("geometry(Point,4326)")
+  name      String
+  createdAt DateTime                            @default(now())
+  updatedAt DateTime                            @updatedAt
+
+  @@index([createdAt])
+  @@map("locations")
 }
